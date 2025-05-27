@@ -1,0 +1,100 @@
+# docker-compose.yml
+services:
+  postgres-users:
+    image: postgres:13-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: users_db
+    ports:
+      - "5432:5432"
+    networks:
+      - backend
+    volumes:
+      - ./db/postgres-users:/docker-entrypoint-initdb.d
+
+  postgres-tweets:
+    image: postgres:13-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: tweets_db
+    ports:
+      - "5532:5432"
+    networks:
+      - backend
+    volumes:
+      - ./db/postgres-tweets:/docker-entrypoint-initdb.d
+
+  nats:
+    image: nats:latest
+    container_name: nats-server
+    ports:
+      - "4222:4222"
+    command: "-js"
+    networks:
+      - backend
+
+  stream-init:
+    image: golang:1.21
+    container_name: stream-init
+    depends_on:
+      - nats
+    volumes:
+      - ./init:/app
+    working_dir: /app
+    command: go run init_stream.go
+    networks:
+      - backend
+
+  users:
+    build: ./users
+    environment:
+      POSTGRES_HOST: postgres-users
+    ports:
+      - "8080:8080"
+    depends_on:
+      - postgres-users
+    networks:
+      - backend
+
+  tweets:
+    build:
+      context: ./tweets
+      dockerfile: Dockerfile
+    depends_on:
+      - nats
+      - stream-init
+      - postgres-tweets
+    ports:
+      - "8090:8090"
+    environment:
+      NATS_HOST: nats-server
+      NATS_PORT: 4222
+      POSTGRES_HOST: postgres-tweets
+      POSTGRES_PORT: 5432
+      USERS_HOST: users
+      USERS_PORT: 8080
+    networks:
+      - backend
+
+  tweets-worker:
+    build:
+      context: ./tweets
+      dockerfile: Dockerfile.worker
+    depends_on:
+      - nats
+      - stream-init
+      - postgres-tweets
+    ports:
+      - "8095:8095"
+    environment:
+      NATS_HOST: nats-server
+      NATS_PORT: 4222
+      POSTGRES_HOST: postgres-tweets
+      POSTGRES_PORT: 5432
+    networks:
+      - backend
+
+networks:
+  backend:
